@@ -9,7 +9,7 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///calculator.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-CORS(app)  # 允许网页跨域访问后端
+CORS(app)  # 允许前端跨域访问
 
 db = SQLAlchemy(app)
 
@@ -28,14 +28,53 @@ with app.app_context():
 
 # 安全计算函数
 def safe_calc(expr):
+    # 1) 把 × ÷ 换成 * /
     expr = expr.replace('×', '*').replace('÷', '/')
-    # 只允许 数字、空格、+ - * / ( ) .
+
+    # 2) 字符白名单校验：只允许数字、空格、+ - * / ( ) .
     if not re.match(r'^[\d\s+\-*/().]+$', expr):
         raise ValueError("表达式含非法字符")
     if not expr.strip():
         raise ValueError("表达式为空")
+
+    # 去掉空格，方便检查语法
+    s = expr.replace(' ', '')
+
+    # 3) 禁止连续两个运算符，除非第二个是紧跟 ( * / + - 之后的一元正负号
+    #    例如：3*-2 可以，1++2 不行
+    for i in range(1, len(s)):
+        a, b = s[i - 1], s[i]
+        if a in '+-*/' and b in '+-*/':
+            if b in '+-' and a in '(*/+-':
+                continue  # b 是一元正负号，合法
+            raise ValueError("无效表达式")
+
+    # 4) 括号必须配对
+    depth = 0
+    for ch in s:
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth < 0:
+                raise ValueError("无效表达式")
+    if depth != 0:
+        raise ValueError("无效表达式")
+
+    # 5) 不允许空括号
+    if '()' in s:
+        raise ValueError("无效表达式")
+
+    # 6) 左括号后不能直接是 * 或 /；运算符后不能直接接 )
+    if re.search(r'[(][*/]', s) or re.search(r'[+\-*/][)]', s):
+        raise ValueError("无效表达式")
+
+    # 7) 表达式不能以运算符结尾
+    if s and s[-1] in '+-*/':
+        raise ValueError("无效表达式")
+
+    # 8) 计算
     try:
-        # 限制 eval 的可用名字空间，防止代码注入
         result = eval(expr, {"__builtins__": None}, {})
         return result
     except ZeroDivisionError:
